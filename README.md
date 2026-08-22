@@ -2,7 +2,7 @@
 
 ### Agentic AI for Safer Routes, Smarter Journeys
 
-Damelyst is a multi-agent GeoAI platform that helps women compare walking routes using safety signals such as lighting, public activity, visibility, main-road quality, emergency proximity and recent verified incidents.
+Damelyst is a multi-agent GeoAI platform that helps women compare routes using safety signals such as lighting, public activity, visibility, main-road quality, emergency proximity and recent verified incidents.
 
 Rather than selecting only the shortest route, Damelyst recommends the **safer available route** while clearly showing safety, confidence, risk and uncertainty.
 
