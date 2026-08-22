@@ -1,4 +1,4 @@
-# Damelyst
+# Damelyst - Where Safety Meets Direction
 
 ### Agentic AI for Safer Routes, Smarter Journeys
 
