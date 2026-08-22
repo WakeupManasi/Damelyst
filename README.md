@@ -1,6 +1,6 @@
 # Damelyst - Where Safety Meets Direction
 
-### Agentic AI for Safer Routes, Smarter Journeys
+### Agentic AI model for Safer Routes, Smarter Journeys
 
 Damelyst is a multi-agent GeoAI platform that helps women compare routes using safety signals such as lighting, public activity, visibility, main-road quality, emergency proximity and recent verified incidents.
 
