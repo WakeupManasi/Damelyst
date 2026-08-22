@@ -1,4 +1,4 @@
-# Damelyst — Pedestrian Route Decision-Support Backend
+# D Damelyst: A Multi-Agent GeoAI System for Real-Time Safer Route Intelligence
 
 Damelyst compares candidate walking routes between two points and scores each
 one on seven dimensions — **lighting, activity, visibility, main-road
