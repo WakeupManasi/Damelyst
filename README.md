@@ -9,7 +9,7 @@ Rather than selecting only the shortest route, Damelyst recommends the **safer a
 ## Features
 
 * Fastest, Balanced and Safest route modes
-* Multiple pedestrian route alternatives
+* Multiple route alternatives
 * Segment-level safety analysis
 * Real-time incident information
 * Explainable route recommendations
