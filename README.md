@@ -1,6 +1,6 @@
-# Damelyst - Where Safety Meets Direction
+# Damelyst  
 
-### Agentic AI model for Safer Routes, Smarter Journeys
+### Agentic AI  model for Safer Routes, Smarter Journeys
 
 Damelyst is a multi-agent GeoAI platform that helps women compare routes using safety signals such as lighting, public activity, visibility, main-road quality, emergency proximity and recent verified incidents.
 
@@ -9,7 +9,7 @@ Rather than selecting only the shortest route, Damelyst recommends the **safer a
 ## Features
 
 * Fastest, Balanced and Safest route modes
-* Multiple pedestrian route alternatives
+* Multiple route alternatives
 * Segment-level safety analysis
 * Real-time incident information
 * Explainable route recommendations
@@ -17,6 +17,15 @@ Rather than selecting only the shortest route, Damelyst recommends the **safer a
 * Live multi-agent progress through SSE
 * Community incident reporting and confirmation
 * Confidence and missing-data warnings
+
+## Multi-Agent Workflow
+
+```text
+Supervisor → Signal Collection → Verification
+           → Risk Assessment → Explanation
+```
+
+Safety scores are calculated deterministically. OpenAI or Gemini is used only to explain verified results and never generates routes, incidents or numeric scores.
 
 ## Tech Stack
 
@@ -73,3 +82,4 @@ GET  /v1/incidents/nearby
 uv run pytest -q
 uv run ruff check app tests
 ```
+
