@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ShieldCheck,
@@ -12,13 +12,21 @@ import {
   Route as RouteIcon,
 } from "lucide-react";
 
-import { demoRoutes } from "./data/demoRoutes";
+import {
+  fetchRoutes,
+  geocode,
+  reverseGeocode,
+  distanceM,
+  type LiveRoute,
+  type LngLat,
+} from "./lib/routing";
 
 import Navbar from "./components/Navbar";
 import Map from "./components/Map";
 import SearchBox from "./components/SearchBox";
 import RouteCard from "./components/RouteCard";
 import FilterPanel from "./components/FilterPanel";
+import NavigationPanel from "./components/NavigationPanel";
 
 export default function Home() {
   /* ========================================= */
@@ -40,8 +48,17 @@ export default function Home() {
   /* FILTER ROUTES */
   /* ========================================= */
 
+  const [routes, setRoutes] = useState<LiveRoute[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [userPos, setUserPos] = useState<LngLat | null>(null);
+  const [mapCenter, setMapCenter] = useState<LngLat | undefined>();
+  const [fromText, setFromText] = useState("");
+  const [toText, setToText] = useState("");
+  const [fromCoord, setFromCoord] = useState<LngLat | null>(null);
+  const [toCoord, setToCoord] = useState<LngLat | null>(null);
+
   const filteredRoutes = useMemo(() => {
-    return demoRoutes.filter((route) => {
+    return routes.filter((route) => {
       const safetyMatch =
         route.safetyScore >= minSafety;
 
@@ -50,27 +67,92 @@ export default function Home() {
 
       return safetyMatch && lightingMatch;
     });
-  }, [minSafety, wellLitOnly]);
+  }, [routes, minSafety, wellLitOnly]);
 
   /* ========================================= */
   /* SEARCH */
   /* ========================================= */
 
-  const handleSearch = (
-    from: string,
-    to: string
-  ) => {
-    if (!from.trim() || !to.trim()) {
-      setSearchMessage(
-        "Please enter both your starting point and destination."
-      );
+  const MY_LOCATION = "📍 My location";
 
+  const getMyPosition = (): Promise<LngLat> =>
+    new Promise((resolve, reject) => {
+      if (userPos) return resolve(userPos);
+      if (!("geolocation" in navigator)) {
+        return reject(new Error("Your browser does not support location."));
+      }
+      navigator.geolocation.getCurrentPosition(
+        (p) => resolve([p.coords.longitude, p.coords.latitude]),
+        () =>
+          reject(
+            new Error(
+              "Location permission denied. Allow location access or type a starting place."
+            )
+          ),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    });
+
+  const handleUseMyLocation = async () => {
+    try {
+      const pos = await getMyPosition();
+      setUserPos(pos);
+      setFromText(MY_LOCATION);
+      setFromCoord(pos);
+      setSearchMessage("Using your current location as the start.");
+    } catch (e) {
+      setSearchMessage((e as Error).message);
+    }
+  };
+
+  const near = userPos ?? mapCenter;
+
+  const runSearch = async (overrideTo?: LngLat) => {
+    const from = fromText;
+    const to = toText;
+    if (!overrideTo && !toCoord && !to.trim()) {
+      setSearchMessage("Enter a destination or tap the map to drop a pin.");
       return;
     }
 
-    setSearchMessage(
-      `Finding safer routes from ${from} to ${to}...`
-    );
+    setLoading(true);
+    setSearchMessage(`Finding safer routes...`);
+
+    try {
+      const start =
+        fromCoord ??
+        (!from.trim() || from === MY_LOCATION
+          ? await getMyPosition()
+          : await geocode(from, near));
+      const end = overrideTo ?? toCoord ?? (await geocode(to, near));
+      setToCoord(end);
+      const found = await fetchRoutes(start, end);
+
+      setRoutes(found);
+      setSelectedRoute(0);
+      setSearchMessage(
+        `Found ${found.length} route${found.length > 1 ? "s" : ""}. Safest is highlighted.`
+      );
+      if (!overrideTo) {
+        document.getElementById("routes")?.scrollIntoView({ behavior: "smooth" });
+      }
+    } catch (e) {
+      setSearchMessage((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* Tap on map / drag pin => set destination and route right away */
+  const handlePickDestination = async (pos: LngLat) => {
+    setToCoord(pos);
+    setToText("📌 Dropped pin");
+    reverseGeocode(pos).then((name) => setToText(`📌 ${name}`));
+    if (fromCoord || fromText.trim() || userPos) {
+      runSearch(pos);
+    } else {
+      setSearchMessage("Destination pinned. Allow location or enter a start, then Find Safe Route.");
+    }
   };
 
   /* ========================================= */
@@ -89,6 +171,71 @@ export default function Home() {
     selectedRoute < filteredRoutes.length
       ? selectedRoute
       : 0;
+
+  /* ========================================= */
+  /* TURN-BY-TURN NAVIGATION */
+  /* ========================================= */
+
+  const [navigating, setNavigating] = useState(false);
+  const [navStep, setNavStep] = useState(0);
+  const [voice, setVoice] = useState(true);
+  const [livePos, setLivePos] = useState<LngLat | null>(null);
+  const activeRoute = filteredRoutes[safeSelectedRoute];
+  const steps = activeRoute?.steps ?? [];
+
+  const startNavigation = () => {
+    if (!steps.length) return;
+    setNavStep(0);
+    setNavigating(true);
+    document.getElementById("routes")?.scrollIntoView({ behavior: "smooth" });
+  };
+  const exitNavigation = () => {
+    setNavigating(false);
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  };
+
+  // Stop navigating if the route changes underneath us
+  useEffect(() => {
+    setNavigating(false);
+  }, [routes]);
+
+  // Follow GPS while navigating and auto-advance near each maneuver
+  useEffect(() => {
+    if (!navigating || !("geolocation" in navigator)) return;
+    const id = navigator.geolocation.watchPosition(
+      (p) => setLivePos([p.coords.longitude, p.coords.latitude]),
+      () => {},
+      { enableHighAccuracy: true }
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [navigating]);
+
+  const nextStep = steps[navStep + 1];
+  const distanceToNext =
+    navigating && livePos && nextStep ? distanceM(livePos, nextStep.location) : null;
+
+  useEffect(() => {
+    if (distanceToNext !== null && distanceToNext < 20 && navStep < steps.length - 1) {
+      setNavStep(navStep + 1);
+    }
+  }, [distanceToNext, navStep, steps.length]);
+
+  // Speak each new instruction
+  const spoken = useRef(-1);
+  useEffect(() => {
+    if (!navigating) {
+      spoken.current = -1;
+      return;
+    }
+    if (!voice || spoken.current === navStep || !("speechSynthesis" in window)) return;
+    spoken.current = navStep;
+    const target = steps[navStep + 1] ?? steps[navStep];
+    if (!target) return;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(target.instruction));
+  }, [navigating, navStep, voice, steps]);
+
+  const remaining = steps.slice(navStep).reduce((s, x) => s + x.distance, 0);
 
   /* ========================================= */
   /* RENDER */
@@ -145,7 +292,32 @@ export default function Home() {
           {/* Search */}
 
           <SearchBox
-            onSearch={handleSearch}
+            from={{
+              text: fromText,
+              setText: (t) => {
+                setFromText(t);
+                setFromCoord(null);
+              },
+              onPick: (p) => {
+                setFromText(p.label);
+                setFromCoord(p.coord);
+              },
+            }}
+            to={{
+              text: toText,
+              setText: (t) => {
+                setToText(t);
+                setToCoord(null);
+              },
+              onPick: (p) => {
+                setToText(p.label);
+                setToCoord(p.coord);
+              },
+            }}
+            near={near}
+            onSearch={() => runSearch()}
+            onUseMyLocation={handleUseMyLocation}
+            loading={loading}
           />
 
           {/* Search status */}
@@ -233,7 +405,7 @@ export default function Home() {
                   </strong>
 
                   <span>
-                    Compare available routes
+                    Tap the map to drop your destination pin
                   </span>
                 </div>
 
@@ -252,28 +424,46 @@ export default function Home() {
             <div className="map-container-wrapper">
 
               <Map
+                routes={filteredRoutes}
                 selectedRoute={safeSelectedRoute}
+                onUserLocation={setUserPos}
+                destination={toCoord}
+                onPickDestination={handlePickDestination}
+                onCenterChange={setMapCenter}
+                navigating={navigating}
+                activeStep={navStep}
               />
 
               {/* Map overlay */}
 
-              <div className="map-overlay">
+              {activeRoute && !navigating ? (
+                <button
+                  type="button"
+                  className="start-nav-button"
+                  onClick={startNavigation}
+                >
+                  <Navigation size={16} />
+                  Start navigation
+                </button>
+              ) : !navigating && (
+                <div className="map-overlay">
 
-                <div className="map-overlay-icon">
-                  <Navigation size={14} />
+                  <div className="map-overlay-icon">
+                    <Navigation size={14} />
+                  </div>
+
+                  <div>
+                    <strong>
+                      Safety optimized
+                    </strong>
+
+                    <span>
+                      Routes ranked by safety
+                    </span>
+                  </div>
+
                 </div>
-
-                <div>
-                  <strong>
-                    Safety optimized
-                  </strong>
-
-                  <span>
-                    Routes ranked by safety
-                  </span>
-                </div>
-
-              </div>
+              )}
 
             </div>
 
@@ -285,6 +475,20 @@ export default function Home() {
 
           <aside className="sidebar">
 
+            {navigating && (
+              <NavigationPanel
+                steps={steps}
+                active={navStep}
+                setActive={setNavStep}
+                distanceToNext={distanceToNext}
+                remaining={remaining}
+                voice={voice}
+                setVoice={setVoice}
+                onExit={exitNavigation}
+              />
+            )}
+
+            {!navigating && <>
             {/* Filters */}
 
             <FilterPanel
@@ -328,12 +532,13 @@ export default function Home() {
                   </div>
 
                   <h3>
-                    No routes found
+                    {routes.length ? "No routes found" : "Search to see routes"}
                   </h3>
 
                   <p>
-                    Try lowering the safety score
-                    or disabling the lighting filter.
+                    {routes.length
+                      ? "Try lowering the safety score or disabling the lighting filter."
+                      : "Enter a destination above. Leave the start empty to use your current location."}
                   </p>
 
                 </div>
@@ -357,6 +562,7 @@ export default function Home() {
               )}
 
             </div>
+            </>}
 
           </aside>
 
