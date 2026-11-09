@@ -19,6 +19,7 @@ import {
   distanceM,
   type LiveRoute,
   type LngLat,
+  type Place,
 } from "./lib/routing";
 
 import Navbar from "./components/Navbar";
@@ -27,6 +28,8 @@ import SearchBox from "./components/SearchBox";
 import RouteCard from "./components/RouteCard";
 import FilterPanel from "./components/FilterPanel";
 import NavigationPanel from "./components/NavigationPanel";
+
+const HISTORY_KEY = "saferoutes:history";
 
 export default function Home() {
   /* ========================================= */
@@ -56,6 +59,8 @@ export default function Home() {
   const [toText, setToText] = useState("");
   const [fromCoord, setFromCoord] = useState<LngLat | null>(null);
   const [toCoord, setToCoord] = useState<LngLat | null>(null);
+  /** true when the destination came from the address box: the pin stays put until the address changes */
+  const [destLocked, setDestLocked] = useState(false);
 
   const filteredRoutes = useMemo(() => {
     return routes.filter((route) => {
@@ -72,6 +77,26 @@ export default function Home() {
   /* ========================================= */
   /* SEARCH */
   /* ========================================= */
+
+  /** Bring the map into view (centred on small screens, where it sits above the list). */
+  const showMap = () =>
+    document.getElementById("route-map")?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  /* Recent destinations, kept in this browser */
+  const [history, setHistory] = useState<Place[]>([]);
+  useEffect(() => {
+    try {
+      setHistory(JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]"));
+    } catch {}
+  }, []);
+  const addHistory = (p: Place) =>
+    setHistory((h) => {
+      const next = [p, ...h.filter((x) => x.label !== p.label)].slice(0, 6);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
 
   const MY_LOCATION = "📍 My location";
 
@@ -107,7 +132,7 @@ export default function Home() {
 
   const near = userPos ?? mapCenter;
 
-  const runSearch = async (overrideTo?: LngLat) => {
+  const runSearch = async (overrideTo?: LngLat, jumpToMap = !overrideTo) => {
     const from = fromText;
     const to = toText;
     if (!overrideTo && !toCoord && !to.trim()) {
@@ -126,6 +151,8 @@ export default function Home() {
           : await geocode(from, near));
       const end = overrideTo ?? toCoord ?? (await geocode(to, near));
       setToCoord(end);
+      if (!overrideTo) setDestLocked(true);
+      if (!overrideTo && to.trim()) addHistory({ label: to, detail: "", coord: end });
       const found = await fetchRoutes(start, end);
 
       setRoutes(found);
@@ -133,9 +160,7 @@ export default function Home() {
       setSearchMessage(
         `Found ${found.length} route${found.length > 1 ? "s" : ""}. Safest is highlighted.`
       );
-      if (!overrideTo) {
-        document.getElementById("routes")?.scrollIntoView({ behavior: "smooth" });
-      }
+      if (jumpToMap) showMap();
     } catch (e) {
       setSearchMessage((e as Error).message);
     } finally {
@@ -145,6 +170,7 @@ export default function Home() {
 
   /* Tap on map / drag pin => set destination and route right away */
   const handlePickDestination = async (pos: LngLat) => {
+    if (destLocked) return;
     setToCoord(pos);
     setToText("📌 Dropped pin");
     reverseGeocode(pos).then((name) => setToText(`📌 ${name}`));
@@ -161,6 +187,7 @@ export default function Home() {
 
   const handleSelectRoute = (index: number) => {
     setSelectedRoute(index);
+    showMap();
   };
 
   /* ========================================= */
@@ -185,9 +212,12 @@ export default function Home() {
 
   const startNavigation = () => {
     if (!steps.length) return;
+    // iOS needs permission for the compass, asked from a tap
+    const DOE = window.DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
+    DOE?.requestPermission?.().catch(() => {});
     setNavStep(0);
     setNavigating(true);
-    document.getElementById("routes")?.scrollIntoView({ behavior: "smooth" });
+    showMap();
   };
   const exitNavigation = () => {
     setNavigating(false);
@@ -208,6 +238,20 @@ export default function Home() {
       { enableHighAccuracy: true }
     );
     return () => navigator.geolocation.clearWatch(id);
+  }, [navigating]);
+
+  // Compass heading (degrees from north) for the direction beam
+  const [compass, setCompass] = useState<number | null>(null);
+  useEffect(() => {
+    if (!navigating) return;
+    type OEvent = DeviceOrientationEvent & { webkitCompassHeading?: number };
+    const onOrient = (e: OEvent) => {
+      if (typeof e.webkitCompassHeading === "number") setCompass(e.webkitCompassHeading);
+      else if (e.absolute && e.alpha !== null) setCompass((360 - e.alpha) % 360);
+    };
+    const evt = "ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "deviceorientation";
+    window.addEventListener(evt, onOrient as EventListener);
+    return () => window.removeEventListener(evt, onOrient as EventListener);
   }, [navigating]);
 
   const nextStep = steps[navStep + 1];
@@ -234,6 +278,15 @@ export default function Home() {
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(target.instruction));
   }, [navigating, navStep, voice, steps]);
+
+  // Where to draw "you" and which way you face: live GPS + compass when we have them,
+  // otherwise the current step and the direction the route goes from there.
+  const youPos: LngLat | null = navigating
+    ? livePos ?? steps[navStep]?.location ?? null
+    : userPos;
+  const youHeading: number | null = navigating
+    ? compass ?? steps[navStep]?.bearing ?? null
+    : compass;
 
   const remaining = steps.slice(navStep).reduce((s, x) => s + x.distance, 0);
 
@@ -308,13 +361,19 @@ export default function Home() {
               setText: (t) => {
                 setToText(t);
                 setToCoord(null);
+                setDestLocked(false);
               },
               onPick: (p) => {
                 setToText(p.label);
                 setToCoord(p.coord);
+                setDestLocked(true);
+                addHistory(p);
+                // pick a place => show routes on the map right away
+                if (fromCoord || fromText.trim() || userPos) runSearch(p.coord, true);
               },
             }}
             near={near}
+            history={history}
             onSearch={() => runSearch()}
             onUseMyLocation={handleUseMyLocation}
             loading={loading}
@@ -389,7 +448,7 @@ export default function Home() {
           {/* MAP */}
           {/* ================================= */}
 
-          <div className="map-section">
+          <div className="map-section" id="route-map">
 
             <div className="map-header">
 
@@ -405,7 +464,7 @@ export default function Home() {
                   </strong>
 
                   <span>
-                    Tap the map to drop your destination pin
+                    {destLocked ? "Destination pinned from your address" : "Tap the map to drop your destination pin"}
                   </span>
                 </div>
 
@@ -428,10 +487,13 @@ export default function Home() {
                 selectedRoute={safeSelectedRoute}
                 onUserLocation={setUserPos}
                 destination={toCoord}
+                destinationLocked={destLocked}
                 onPickDestination={handlePickDestination}
                 onCenterChange={setMapCenter}
                 navigating={navigating}
                 activeStep={navStep}
+                you={youPos}
+                heading={youHeading}
               />
 
               {/* Map overlay */}
@@ -557,6 +619,7 @@ export default function Home() {
                     onSelect={() =>
                       handleSelectRoute(index)
                     }
+                    onNavigate={startNavigation}
                   />
                 )
               )}

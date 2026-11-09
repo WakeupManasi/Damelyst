@@ -3435,7 +3435,7 @@ footer {
 
 /* ========== Turn-by-turn navigation ========== */
 .start-nav-button {
-  position: absolute; left: 18px; bottom: 18px; z-index: 5;
+  position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 5;
   display: flex; align-items: center; gap: 8px;
   padding: 12px 18px; border: 0; border-radius: 12px; cursor: pointer;
   font-weight: 700; font-size: 14px; color: #fff;
@@ -3491,3 +3491,27 @@ footer {
 .nav-step-dist { font-size: 12px; opacity: 0.7; white-space: nowrap; }
 .dark .nav-panel { background: #18181b; border-color: rgba(74, 222, 128, 0.25); }
 .dark .nav-stepper button { color: #4ade80; border-color: rgba(74, 222, 128, 0.3); }
+
+/* ========== "You are here" marker with direction beam ========== */
+.you-marker { position: relative; width: 180px; height: 180px; pointer-events: none; }
+.you-beam {
+  position: absolute; left: 50%; bottom: 50%; width: 100px; height: 90px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at 50% 100%, rgba(37, 99, 235, 0.55) 0%, rgba(37, 99, 235, 0.18) 55%, rgba(37, 99, 235, 0) 100%);
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+}
+.you-marker.no-heading .you-beam { display: none; }
+.you-pulse {
+  position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+  border-radius: 50%; background: rgba(37, 99, 235, 0.18); border: 1px solid rgba(37, 99, 235, 0.25);
+  animation: you-pulse 2s ease-out infinite;
+}
+.you-dot {
+  position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px;
+  border-radius: 50%; background: #1a73e8; border: 3px solid #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+@keyframes you-pulse { 0% { transform: scale(0.6); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+
+/* keep the map header clear of the fixed navbar when scrolled to */
+#route-map { scroll-margin-top: 84px; }

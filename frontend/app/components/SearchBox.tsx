@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, MapPin, LocateFixed } from "lucide-react";
+import { Search, MapPin, LocateFixed, History } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { searchPlaces, type LngLat, type Place } from "../lib/routing";
 
@@ -14,6 +14,8 @@ type SearchBoxProps = {
   from: Field;
   to: Field;
   near?: LngLat;
+  /** recent destinations shown when the destination box is focused */
+  history?: Place[];
   onSearch: () => void;
   onUseMyLocation: () => void;
   loading?: boolean;
@@ -25,7 +27,9 @@ function PlaceInput({
   near,
   iconClass,
   extra,
+  history = [],
 }: {
+  history?: Place[];
   field: Field;
   placeholder: string;
   near?: LngLat;
@@ -35,6 +39,19 @@ function PlaceInput({
   const [items, setItems] = useState<Place[]>([]);
   const [open, setOpen] = useState(false);
   const typed = useRef(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Empty or untouched box: offer recent destinations; otherwise the last suggestions
+  const openList = () => {
+    if (history.length && (!typed.current || !field.text.trim())) {
+      setShowHistory(true);
+      setOpen(true);
+    } else if (items.length) {
+      setShowHistory(false);
+      setOpen(true);
+    }
+  };
 
   // Debounced suggestions while the user types
   useEffect(() => {
@@ -43,7 +60,10 @@ function PlaceInput({
     const t = setTimeout(async () => {
       const r = await searchPlaces(q, near);
       setItems(r);
-      setOpen(r.length > 0);
+      if (q.trim()) setShowHistory(false);
+      // only pop the list open if the user is still in this box
+      if (document.activeElement !== inputRef.current) return;
+      setOpen(r.length > 0 || (!q.trim() && history.length > 0));
     }, 300);
     return () => clearTimeout(t);
   }, [field.text, near]);
@@ -57,9 +77,15 @@ function PlaceInput({
         value={field.text}
         onChange={(e) => {
           typed.current = true;
+          setShowHistory(e.target.value.trim() === "" && history.length > 0);
           field.setText(e.target.value);
         }}
-        onFocus={() => items.length && setOpen(true)}
+        ref={inputRef}
+        onFocus={(e) => {
+          openList();
+          if (history.length && !typed.current) e.currentTarget.select();
+        }}
+        onClick={openList}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
       />
       {extra}
@@ -84,7 +110,12 @@ function PlaceInput({
             overflowY: "auto",
           }}
         >
-          {items.map((p, i) => (
+          {showHistory && (
+            <li style={{ padding: "6px 10px 2px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5, opacity: 0.55 }}>
+              RECENT
+            </li>
+          )}
+          {(showHistory ? history : items).map((p, i) => (
             <li
               key={i}
               onMouseDown={(e) => {
@@ -97,7 +128,10 @@ function PlaceInput({
               onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(22,163,74,0.08)")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "")}
             >
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</div>
+              <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                {showHistory && <History size={14} style={{ opacity: 0.6, flex: "none" }} />}
+                {p.label}
+              </div>
               {p.detail && <div style={{ fontSize: 12, opacity: 0.65 }}>{p.detail}</div>}
             </li>
           ))}
@@ -111,6 +145,7 @@ export default function SearchBox({
   from,
   to,
   near,
+  history,
   onSearch,
   onUseMyLocation,
   loading,
@@ -155,6 +190,7 @@ export default function SearchBox({
         field={to}
         placeholder="Destination, shop, chowk… or tap map"
         near={near}
+        history={history}
         iconClass="destination"
       />
 

@@ -16,12 +16,15 @@ type RouteCardProps = {
   route: Route;
   selected: boolean;
   onSelect: () => void;
+  /** shown on the selected card: start turn-by-turn directions */
+  onNavigate?: () => void;
 };
 
 export default function RouteCard({
   route,
   selected,
   onSelect,
+  onNavigate,
 }: RouteCardProps) {
   return (
     <article
@@ -168,11 +171,12 @@ export default function RouteCard({
         className="route-button"
         onClick={(event) => {
           event.stopPropagation();
-          onSelect();
+          if (selected && onNavigate) onNavigate();
+          else onSelect();
         }}
       >
         <span>
-          {selected ? "Route Selected" : "Select Route"}
+          {selected ? (onNavigate ? "Start navigation" : "Route Selected") : "Select Route"}
         </span>
 
         <ArrowRight size={16} />

@@ -147,19 +147,44 @@ export type LiveRoute = Route & { geometry: LngLat[]; steps: NavStep[] };
  * roads, which tend to be better lit and busier than unnamed paths.
  */
 export async function fetchRoutes(from: LngLat, to: LngLat): Promise<LiveRoute[]> {
-  const url =
-    `https://routing.openstreetmap.de/routed-foot/route/v1/foot/` +
-    `${from[0]},${from[1]};${to[0]},${to[1]}` +
-    `?alternatives=3&overview=full&geometries=geojson&steps=true`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Routing service unavailable. Try again.");
-  const data = (await res.json()) as { code: string; routes: OsrmRoute[] };
-  if (data.code !== "Ok" || !data.routes.length) {
-    throw new Error("No route found between these places.");
+  const base = await osrm([from, to], true);
+  if (!base.length) throw new Error("No route found between these places.");
+
+  // The public server often returns just one walking route. Add detours
+  // through points on either side of the straight line to get real choices.
+  let candidates = [...base];
+  if (candidates.length < 3) {
+    const straight = distanceM(from, to);
+    const mid: LngLat = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
+    // perpendicular unit vector (in degrees, corrected for latitude)
+    const k = Math.cos((mid[1] * Math.PI) / 180);
+    const dx = (to[0] - from[0]) * k, dy = to[1] - from[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const offsetDeg = Math.max(150, straight * 0.25) / 111320;
+    const vias: LngLat[] = [1, -1].map((sgn) => [
+      mid[0] + (sgn * -dy / len) * offsetDeg / k,
+      mid[1] + (sgn * dx / len) * offsetDeg,
+    ]);
+    const extra = await Promise.all(vias.map((v) => osrm([from, v, to], false).catch(() => [])));
+    candidates.push(...extra.flat());
   }
 
-  const routes = data.routes.slice(0, 3).map((r, i) => {
-    const steps = r.legs.flatMap((l) => l.steps);
+  const shortest = Math.min(...candidates.map((r) => r.distance));
+  const picked: OsrmRoute[] = [];
+  for (const r of candidates) {
+    if (r.distance > shortest * 1.6) continue;
+    if (picked.some((p) => overlap(r.geometry.coordinates, p.geometry.coordinates) > 0.8)) continue;
+    picked.push(r);
+    if (picked.length === 3) break;
+  }
+
+  const usedNames = new Set<string>();
+  const routes = picked.map((r, i) => {
+    // drop the arrive/depart pair at any via point
+    const all = r.legs.flatMap((l) => l.steps);
+    const steps = all.filter((s, j) =>
+      !((s.maneuver.type === "arrive" && j < all.length - 1) ||
+        (s.maneuver.type === "depart" && j > 0)));
     const total = steps.reduce((s, x) => s + x.distance, 0) || 1;
     const major = steps.filter((s) => s.ref).reduce((s, x) => s + x.distance, 0) / total;
     const named = steps.filter((s) => s.name).reduce((s, x) => s + x.distance, 0) / total;
@@ -167,9 +192,10 @@ export async function fetchRoutes(from: LngLat, to: LngLat): Promise<LiveRoute[]
     const lighting = Math.round(45 + 35 * named + 20 * major);
     const safetyScore = Math.min(98, Math.round(50 + 30 * named + 18 * major));
     const crowdLevel = major > 0.4 ? "High" : named > 0.6 ? "Medium" : "Low";
-    const mainRoad = steps
-      .filter((s) => s.name)
-      .sort((a, b) => b.distance - a.distance)[0]?.name;
+    // name each route after its longest road not already used by another route
+    const roads = steps.filter((s) => s.name).sort((a, b) => b.distance - a.distance);
+    const mainRoad = (roads.find((s) => !usedNames.has(s.name)) ?? roads[0])?.name;
+    if (mainRoad) usedNames.add(mainRoad);
 
     return {
       id: i + 1,
@@ -195,4 +221,26 @@ export async function fetchRoutes(from: LngLat, to: LngLat): Promise<LiveRoute[]
 
   return routes.sort((a, b) => b.safetyScore - a.safetyScore)
     .map((r, i) => ({ ...r, color: ROUTE_COLORS[i] }));
+}
+
+async function osrm(points: LngLat[], alternatives: boolean): Promise<OsrmRoute[]> {
+  const url =
+    `https://routing.openstreetmap.de/routed-foot/route/v1/foot/` +
+    points.map((p) => `${p[0]},${p[1]}`).join(";") +
+    `?alternatives=${alternatives ? 3 : "false"}&overview=full&geometries=geojson&steps=true`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Routing service unavailable. Try again.");
+  const data = (await res.json()) as { code: string; routes: OsrmRoute[] };
+  return data.code === "Ok" ? data.routes : [];
+}
+
+/** Share of sampled points on `a` that lie within ~25 m of route `b`. */
+function overlap(a: LngLat[], b: LngLat[]): number {
+  const step = Math.max(1, Math.floor(a.length / 40));
+  let near = 0, n = 0;
+  for (let i = 0; i < a.length; i += step) {
+    n++;
+    if (b.some((q) => distanceM(a[i], q) < 25)) near++;
+  }
+  return n ? near / n : 1;
 }

@@ -1,0 +1,30 @@
+# Render Blueprint: deploys the FastAPI backend and the Next.js frontend.
+# In Render: New + -> Blueprint -> pick this repo. You'll be asked for the
+# Supabase values (they are not stored in git).
+services:
+  - type: web
+    name: saferoutes-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+
+  - type: web
+    name: saferoutes-web
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

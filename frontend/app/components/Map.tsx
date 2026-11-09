@@ -12,11 +12,16 @@ type MapProps = {
   onUserLocation?: (pos: LngLat) => void;
   /** Pin chosen by tapping/dragging on the map */
   destination?: LngLat | null;
+  /** Pin set from the address box: not draggable, map taps don't move it */
+  destinationLocked?: boolean;
   onPickDestination?: (pos: LngLat) => void;
   onCenterChange?: (pos: LngLat) => void;
   /** Turn-by-turn mode: camera follows the active step */
   navigating?: boolean;
   activeStep?: number;
+  /** Your position and facing direction (degrees from north) for the beam marker */
+  you?: LngLat | null;
+  heading?: number | null;
 };
 
 export default function Map({
@@ -24,11 +29,15 @@ export default function Map({
   selectedRoute,
   onUserLocation,
   destination,
+  destinationLocked = false,
   onPickDestination,
   onCenterChange,
   navigating = false,
   activeStep = 0,
+  you = null,
+  heading = null,
 }: MapProps) {
+  const youMarker = useRef<maplibregl.Marker | null>(null);
   const navRef = useRef(navigating);
   navRef.current = navigating;
   const destMarker = useRef<maplibregl.Marker | null>(null);
@@ -62,6 +71,7 @@ export default function Map({
       positionOptions: { enableHighAccuracy: true },
       trackUserLocation: true,
       showAccuracyCircle: true,
+      showUserLocation: false, // we draw our own dot with a direction beam
     });
     newMap.addControl(geolocate, "top-right");
     geolocate.on("geolocate", (e: GeolocationPosition) => {
@@ -114,7 +124,9 @@ export default function Map({
     } else {
       destMarker.current.setLngLat(destination);
     }
-  }, [destination]);
+    destMarker.current.setDraggable(!destinationLocked);
+    if (m.getCanvas()) m.getCanvas().style.cursor = destinationLocked ? "" : "crosshair";
+  }, [destination, destinationLocked]);
 
   /* Draw routes whenever they or the selection change */
   useEffect(() => {
@@ -173,6 +185,34 @@ export default function Map({
     if (loaded.current) draw();
     else m.once("routes-ready", draw);
   }, [routes, selectedRoute]);
+
+  /* Hide the green start pin while navigating so it doesn't cover your position */
+  useEffect(() => {
+    markers.current.forEach((mk) => (mk.getElement().style.display = navigating ? "none" : ""));
+  }, [navigating, routes, selectedRoute]);
+
+  /* "You are here" dot with a light beam showing which way you face */
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    if (!you) {
+      youMarker.current?.remove();
+      youMarker.current = null;
+      return;
+    }
+    if (!youMarker.current) {
+      const el = document.createElement("div");
+      el.className = "you-marker";
+      el.innerHTML = '<div class="you-beam"></div><div class="you-pulse"></div><div class="you-dot"></div>';
+      youMarker.current = new maplibregl.Marker({ element: el, rotationAlignment: "map", pitchAlignment: "viewport" })
+        .setLngLat(you)
+        .addTo(m);
+    }
+    const mk = youMarker.current;
+    mk.setLngLat(you);
+    mk.setRotation(heading ?? 0);
+    mk.getElement().classList.toggle("no-heading", heading === null);
+  }, [you, heading]);
 
   /* Turn-by-turn: maneuver dots + camera that follows the active step */
   useEffect(() => {
