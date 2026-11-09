@@ -1,21 +1,33 @@
-# Render Blueprint: deploys the FastAPI backend and the Next.js frontend.
-# In Render: New + -> Blueprint -> pick this repo. You'll be asked for the
-# Supabase values (they are not stored in git).
+# Render Blueprint: deploys the FastAPI backend (repo root, Dockerfile) and
+# the Next.js frontend (frontend/). In Render: New + -> Blueprint -> this repo.
+# Secret keys are asked for in the dashboard; they are never stored in git.
+# All backend keys are optional: without them the API runs in fallback mode.
 services:
   - type: web
     name: saferoutes-api
-    runtime: python
+    runtime: docker
     plan: free
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.13.5
-      - key: SUPABASE_URL
+      - key: PORT # the Dockerfile serves on 8000
+        value: "8000"
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CORS_ORIGINS
+        value: '["https://saferoutes-web.onrender.com"]'
+      - key: LLM_PROVIDER
+        value: openai
+      - key: ORS_API_KEY
         sync: false
-      - key: SUPABASE_KEY
+      - key: GEOAPIFY_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
         sync: false
 
   - type: web
